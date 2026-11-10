@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: Service
+metadata: {name: db}
+spec:
+  clusterIP: None
+  selector: {app: db}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: db}
+spec:
+  serviceName: db
+  replicas: 1
+  selector: {matchLabels: {app: db}}
+  template:
+    metadata: {labels: {app: db}}
+    spec:
+      nodeSelector: {role: infra}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      containers:
+      - name: postgres
+        image: postgres:16
+        args: ["-c", "max_connections=100"]
+        env:
+        - {name: POSTGRES_USER, value: vaccinations}
+        - {name: POSTGRES_DB, value: vaccinations}
+        - name: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: db-secret, key: password}}
+        readinessProbe:
+          exec: {command: [pg_isready, -U, vaccinations, -d, vaccinations]}
+        volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+  volumeClaimTemplates:
+  - metadata: {name: data}
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources: {requests: {storage: 1Gi}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata: {name: migrate}
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: migrate
+        image: postgres:16
+        command: [psql, -v, ON_ERROR_STOP=1, -h, db, -U, vaccinations, -d, vaccinations, -f, /schema/schema.sql]
+        env:
+        - name: PGPASSWORD
+          valueFrom: {secretKeyRef: {name: db-secret, key: password}}
+        volumeMounts: [{name: schema, mountPath: /schema}]
+      volumes: [{name: schema, configMap: {name: schema}}]

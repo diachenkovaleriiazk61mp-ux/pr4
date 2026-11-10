@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: monitor}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: pr3-monitor}
+rules:
+- apiGroups: [""]
+  resources: [pods, nodes, nodes/proxy]
+  verbs: [get, list, watch]
+- apiGroups: [apps]
+  resources: [deployments]
+  verbs: [get, list, watch]
+- apiGroups: [autoscaling]
+  resources: [horizontalpodautoscalers]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: pr3-monitor}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: pr3-monitor}
+subjects: [{kind: ServiceAccount, name: monitor, namespace: default}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: prometheus}
+spec:
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata: {labels: {app: prometheus}}
+    spec:
+      serviceAccountName: monitor
+      nodeSelector: {role: infra}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v3.2.1
+        args: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=1d"]
+        volumeMounts: [{name: config, mountPath: /etc/prometheus}]
+      volumes: [{name: config, configMap: {name: prometheus-config}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus}
+spec:
+  type: NodePort
+  selector: {app: prometheus}
+  ports: [{port: 9090, nodePort: 30090}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: kube-state}
+spec:
+  selector: {matchLabels: {app: kube-state}}
+  template:
+    metadata: {labels: {app: kube-state}}
+    spec:
+      serviceAccountName: monitor
+      nodeSelector: {role: infra}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      containers:
+      - name: kube-state
+        image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.15.0
+        args: ["--resources=deployments,horizontalpodautoscalers", "--namespaces=default"]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: kube-state}
+spec:
+  selector: {app: kube-state}
+  ports: [{port: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: postgres-exporter}
+spec:
+  selector: {matchLabels: {app: postgres-exporter}}
+  template:
+    metadata: {labels: {app: postgres-exporter}}
+    spec:
+      nodeSelector: {role: infra}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      containers:
+      - name: exporter
+        image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+        env:
+        - name: DB_PASSWORD
+          valueFrom: {secretKeyRef: {name: db-secret, key: password}}
+        - {name: DATA_SOURCE_NAME, value: "postgresql://vaccinations:$(DB_PASSWORD)@db:5432/vaccinations?sslmode=disable"}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres-exporter}
+spec:
+  selector: {app: postgres-exporter}
+  ports: [{port: 9187}]

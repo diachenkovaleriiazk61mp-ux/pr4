@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: worker}
+spec:
+  selector: {matchLabels: {app: worker}}
+  template:
+    metadata: {labels: {app: worker}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: worker
+        image: vaccinations-worker-pr4:local
+        imagePullPolicy: Never
+        ports: [{name: metrics, containerPort: 9100}]
+        env:
+        - name: WORKER_ID
+          valueFrom: {fieldRef: {fieldPath: metadata.name}}
+        - name: DB_PASSWORD
+          valueFrom: {secretKeyRef: {name: db-secret, key: password}}
+        - {name: DATABASE_URL, value: "postgresql://vaccinations:$(DB_PASSWORD)@db:5432/vaccinations"}
+        - {name: WEB_URL, value: "http://web:8000"}
+        - {name: T_POLL_MS, value: "10"}
+        - {name: LEASE_SECONDS, value: "10"}
+        - {name: FAIL_RATE, value: "0"}
+        - {name: CLAIM_MODE, value: safe}
+        readinessProbe:
+          httpGet: {path: /metrics, port: metrics}
+        resources:
+          requests: {cpu: 250m}
+          limits: {cpu: 500m, memory: 512Mi}

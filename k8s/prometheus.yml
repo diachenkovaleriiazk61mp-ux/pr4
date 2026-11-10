@@ -1,0 +1,35 @@
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+scrape_configs:
+- job_name: web
+  kubernetes_sd_configs:
+  - role: pod
+    namespaces: {names: [default]}
+  relabel_configs:
+  - {source_labels: [__meta_kubernetes_pod_label_app], regex: web, action: keep}
+  - {source_labels: [__meta_kubernetes_pod_container_port_name], regex: http, action: keep}
+  - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+- job_name: cadvisor
+  scheme: https
+  authorization: {credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token}
+  tls_config: {ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt}
+  kubernetes_sd_configs: [{role: node}]
+  relabel_configs:
+  - {target_label: __address__, replacement: "kubernetes.default.svc:443"}
+  - {source_labels: [__meta_kubernetes_node_name], target_label: __metrics_path__, replacement: "/api/v1/nodes/${1}/proxy/metrics/cadvisor"}
+  - {source_labels: [__meta_kubernetes_node_name], target_label: node}
+  metric_relabel_configs:
+  - {source_labels: [__name__], regex: "container_cpu_(usage_seconds|cfs_periods|cfs_throttled_periods)_total", action: keep}
+- job_name: kube-state
+  static_configs: [{targets: ["kube-state:8080"]}]
+- job_name: postgres
+  static_configs: [{targets: ["postgres-exporter:9187"]}]
+- job_name: worker
+  kubernetes_sd_configs:
+  - role: pod
+    namespaces: {names: [default]}
+  relabel_configs:
+  - {source_labels: [__meta_kubernetes_pod_label_app], regex: worker, action: keep}
+  - {source_labels: [__meta_kubernetes_pod_container_port_name], regex: metrics, action: keep}
+  - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
